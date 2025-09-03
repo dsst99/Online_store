@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'drf_spectacular',
     'rest_framework_simplejwt',
     'django_extensions',
     'apps.users',
@@ -100,6 +101,15 @@ CACHES = {
         #
         "LOCATION": "127.0.0.1:11211"
     }
+}
+
+REST_FRAMEWORK = {
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Online Store',
+
 }
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/

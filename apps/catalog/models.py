@@ -10,7 +10,7 @@ class Category(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Обновлено')
 
     def soft_delete(self):
-        """без удаления из бд, а просто как пометка неактивна"""
+        """мягкое удаление, (is_active = False)"""
         self.is_active = False
         self.save()
 
