@@ -1,3 +1,4 @@
+from django.db.models.functions import Lower
 from rest_framework import status, generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -59,11 +60,24 @@ class CategoryListView(generics.ListAPIView):
     Ответ:
     - 200 OK: массив объектов [{id, name, slug}, ...]
     """
-    queryset = Category.objects.filter(is_active=True).order_by('name')
+    queryset = Category.objects.filter(is_active=True).order_by(Lower('name'))
     serializer_class = CategoryListSerializer
     filter_backends = [filters.SearchFilter]
     search_fields = ['name']
     pagination_class = None
+
+
+@method_decorator(cache_page(60 * 5, key_prefix="category"), name='dispatch')
+class CategoryDetailView(generics.RetrieveAPIView):
+    """
+    GET /api/v1/categories/{id}/
+    Возвращает детали категории:
+    - id, name, slug, is_active, created_at, updated_at
+    Кэш:
+    - ключ: category:{id}, TTL 5 минут
+    """
+    queryset = Category.objects.all()
+    serializer_class = CategoryListSerializer
 
 
 class ProductListView(generics.ListAPIView):
@@ -84,7 +98,7 @@ class ProductListView(generics.ListAPIView):
     Ответ:
     - 200 OK: массив объектов [{id, name, price, category_id}, ...]
     """
-    queryset = Product.objects.filter(is_active=True).order_by('name')
+    queryset = Product.objects.filter(is_active=True).order_by(Lower('name'))
     serializer_class = ProductListSerializer
     filter_backends = [filters.SearchFilter]
     search_fields = ['name']

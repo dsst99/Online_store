@@ -21,6 +21,9 @@ class Category(models.Model):
             models.Index(fields=['updated_at']),
         ]
 
+    def __str__(self):
+        return  self.id, self.name, self.slug, self.is_active, self.created_at, self.updated_at
+
 
 class Product(models.Model):
     """
@@ -41,3 +44,6 @@ class Product(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     update_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name, self.price, self.is_active
