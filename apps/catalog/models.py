@@ -9,6 +9,11 @@ class Category(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Обновлено')
 
+    def soft_delete(self):
+        """без удаления из бд, а просто как пометка неактивна"""
+        self.is_active = False
+        self.save()
+
     class Meta:
         """Индекс для полей если понадобится выводить сортировкой товары по актуальности создания"""
         indexes = [
