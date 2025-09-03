@@ -1,8 +1,11 @@
-from rest_framework import status
+from rest_framework import status, generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
+from rest_framework import filters
 from apps.catalog.models import Category
+from apps.catalog.serializers import CategoryListSerializer
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
 
 
 class CategoryDeleteView(APIView):
@@ -32,3 +35,39 @@ class CategoryDeleteView(APIView):
 
         category.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@method_decorator(cache_page(60 * 5), name='dispatch')
+class CategoryListView(generics.ListAPIView):
+    """
+    GET /api/v1/categories/
+
+    Возвращает список активных категорий.
+
+    Фильтры:
+    - is_active=true (по умолчанию)
+    - search по name (подстрока, регистр нечувствителен)
+
+    Сортировка:
+    - name ASC (по возрастанию)
+
+    Пагинация:
+    - отключена по умолчанию
+    - если количество категорий > 200 — можно включить page/size
+
+    Кэширование:
+    - ключ: categories:list
+    - TTL: 5 минут (+/- 10% джиттер)
+
+    Заголовки:
+    - ETag / Last-Modified (опционально)
+    - X-Cache: HIT | MISS
+
+    Ответ:
+    - 200 OK: массив объектов [{id, name, slug}, ...]
+    """
+    queryset = Category.objects.filter(is_active=True).order_by('name')
+    serializer_class = CategoryListSerializer
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['name']
+    pagination_class = None
