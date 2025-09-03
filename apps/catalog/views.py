@@ -2,8 +2,8 @@ from rest_framework import status, generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import filters
-from apps.catalog.models import Category
-from apps.catalog.serializers import CategoryListSerializer
+from apps.catalog.models import Category, Product
+from apps.catalog.serializers import CategoryListSerializer, ProductListSerializer
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 
@@ -29,7 +29,7 @@ class CategoryDeleteView(APIView):
             return Response({'detail': 'Нет прав на удаление!'},
                             status=status.HTTP_403_FORBIDDEN)
 
-        if category.product_set.exists():
+        if category.products.exists():
             return Response({'detail': 'Категория содержит продукты, удаление невозможно!'},
                             status=status.HTTP_400_BAD_REQUEST)
 
@@ -41,28 +41,21 @@ class CategoryDeleteView(APIView):
 class CategoryListView(generics.ListAPIView):
     """
     GET /api/v1/categories/
-
     Возвращает список активных категорий.
-
     Фильтры:
     - is_active=true (по умолчанию)
     - search по name (подстрока, регистр нечувствителен)
-
     Сортировка:
     - name ASC (по возрастанию)
-
     Пагинация:
     - отключена по умолчанию
     - если количество категорий > 200 — можно включить page/size
-
     Кэширование:
     - ключ: categories:list
     - TTL: 5 минут (+/- 10% джиттер)
-
     Заголовки:
     - ETag / Last-Modified (опционально)
     - X-Cache: HIT | MISS
-
     Ответ:
     - 200 OK: массив объектов [{id, name, slug}, ...]
     """
@@ -70,4 +63,30 @@ class CategoryListView(generics.ListAPIView):
     serializer_class = CategoryListSerializer
     filter_backends = [filters.SearchFilter]
     search_fields = ['name']
+    pagination_class = None
+
+
+class ProductListView(generics.ListAPIView):
+    """
+    GET /api/v1/products/
+    Возвращает список активных продуктов.
+    Фильтры:
+    - is_active=true (по умолчанию)
+    - search по name (подстрока, регистр нечувствителен)
+    - фильтр по category_id
+    Сортировка:
+    - name ASC (по возрастанию)
+    Пагинация:
+    - отключена по умолчанию
+    - если количество продуктов > 200 — включить page/size
+    Кэширование:
+    - TTL 5 минут
+    Ответ:
+    - 200 OK: массив объектов [{id, name, price, category_id}, ...]
+    """
+    queryset = Product.objects.filter(is_active=True).order_by('name')
+    serializer_class = ProductListSerializer
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['name']
+    filterset_fields = ['category', 'price']
     pagination_class = None

@@ -20,3 +20,24 @@ class Category(models.Model):
             models.Index(fields=['created_at']),
             models.Index(fields=['updated_at']),
         ]
+
+
+class Product(models.Model):
+    """
+    Модель продукта.
+    Поля:
+    - category: категория продукта (ForeignKey на Category)
+    - name: название продукта
+    - price: цена
+    - is_active: активность продукта (для soft delete)
+    - created_at, updated_at: даты создания и обновления
+    Правила:
+    - Физическое удаление только через админку или при отсутствии связанных данных.
+    - Soft delete: is_active=False
+    """
+    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='products')
+    name = models.CharField(max_length=250, verbose_name='название продукта')
+    price = models.DecimalField(max_digits=8, decimal_places=2, verbose_name='цена')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    update_at = models.DateTimeField(auto_now=True)
