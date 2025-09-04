@@ -20,32 +20,34 @@ class CategoryDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
-        fields = ['id', 'name', 'slug', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'slug', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
-    def validate_name(self, value):
-        trimmed = value.strip()
-        if not trimmed:
-            raise serializers.ValidationError('Имя не может быть пустым')
-        return trimmed
 
-    def validate_slug(self, value):
-        """
-        Нормализация slug:
-        - если slug передан → slugify + обрезка до 100
-        - если не передан → генерируем из name (из входных данных или из instance)
-        - проверяем непустоту после нормализации
-        """
-        if value:
-            new_slug = slugify(value)
-        else:
-            name = (self.initial_data.get('name') if isinstance(self.initial_data, dict) else None) \
-                   or getattr(self.instance, 'name', '')
-            new_slug = slugify(name or '')
-        new_slug = (new_slug or '')[:100]
-        if not new_slug:
-            raise serializers.ValidationError('Slug не может быть пустым')
-        return new_slug
+def validate_name(self, value):
+    trimmed = value.strip()
+    if not trimmed:
+        raise serializers.ValidationError('Имя не может быть пустым')
+    return trimmed
+
+
+def validate_slug(self, value):
+    """
+    Нормализация slug:
+    - если slug передан → slugify + обрезка до 100
+    - если не передан → генерируем из name (из входных данных или из instance)
+    - проверяем непустоту после нормализации
+    """
+    if value:
+        new_slug = slugify(value)
+    else:
+        name = (self.initial_data.get('name') if isinstance(self.initial_data, dict) else None) \
+               or getattr(self.instance, 'name', '')
+        new_slug = slugify(name or '')
+    new_slug = (new_slug or '')[:100]
+    if not new_slug:
+        raise serializers.ValidationError('Slug не может быть пустым')
+    return new_slug
 
 
 class CategoryInlineSerializer(serializers.ModelSerializer):

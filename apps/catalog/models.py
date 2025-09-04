@@ -1,5 +1,6 @@
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.functions import Lower
 from django.utils.text import slugify
 
 
@@ -37,15 +38,17 @@ class Category(models.Model):
         super().save(*args, **kwargs)
 
     def soft_delete(self):
-        """мягкое удаление, (is_active = False)"""
-        self.is_active = False
-        self.save(update_fields=['is_active', 'updated_at'])
+        """Мягкое удаление (is_active = False)."""
+        if self.is_active:
+            self.is_active = False
+            self.save(update_fields=['is_active', 'updated_at'])
 
     class Meta:
-        """Индекс для полей если понадобится выводить сортировкой товары по актуальности создания"""
+        """Индексы под сортировку/поиск по времени и имени"""
         indexes = [
             models.Index(fields=['created_at']),
             models.Index(fields=['updated_at']),
+            models.Index(Lower('name'), name='category_name_lower_idx'),
         ]
         ordering = ['name']
         verbose_name = 'Категория'
@@ -72,21 +75,27 @@ class Product(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name='Создано')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Обновлено')
 
+    def save(self, *args, **kwargs):
+        if self.name:
+            self.name = self.name.strip()
+        super().save(*args, **kwargs)
+
     def soft_delete(self):
-        """мягкое удаление продукта (is_active = False)"""
+        """Мягкое удаление продукта (is_active = False)."""
         if self.is_active:
             self.is_active = False
             self.save(update_fields=['is_active', 'updated_at'])
 
     class Meta:
-        """Проверка на отрицательную стоимость в БД и добавление индекса по цене B-Tree"""
+        """Проверка значений и индексы под выборки и поиск"""
         indexes = [
             models.Index(fields=['price']),
             models.Index(fields=['category', 'is_active', '-created_at']),
+            models.Index(Lower('name'), name='product_name_lower_idx'),
         ]
         constraints = [
-            models.CheckConstraint(check=models.Q(price__gte=0), name='price__gte_0'),
-            models.CheckConstraint(check=models.Q(stock__gte=0), name='stock__gte_0'),
+            models.CheckConstraint(check=models.Q(price__gte=0), name='price_gte_0'),
+            models.CheckConstraint(check=models.Q(stock__gte=0), name='stock_gte_0'),
         ]
         ordering = ['name']
         verbose_name = "Продукт"
@@ -94,8 +103,3 @@ class Product(models.Model):
 
     def __str__(self):
         return self.name
-
-    def save(self, *args, **kwargs):
-        if self.name:
-            self.name = self.name.strip()
-        super().save(*args, **kwargs)
