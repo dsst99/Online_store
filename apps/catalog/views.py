@@ -1,7 +1,13 @@
+import hashlib
+from random import random
+from urllib.parse import urlencode
+from django.core.cache import cache
+
 from django.db.models.functions import Lower
 from django.shortcuts import get_object_or_404
 from rest_framework import status, generics, permissions
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 from rest_framework import filters
 from apps.catalog.models import Category, Product
@@ -10,44 +16,96 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 
 
-@method_decorator(cache_page(60 * 5), name='dispatch')
+def _ttl_with_jitter(base: int = 300, jitter: float = 0.10) -> int:
+    """TTL c анти-догпайлом: +-10% по умолчанию."""
+    delta = int(base * jitter)
+    return base + random.randint(-delta, delta)
+
+
+def _hash_params(params: dict) -> str:
+    """Стабильный хэш нормализованных параметров запроса."""
+    encoded = urlencode(sorted(params.items()), doseq=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+class AnonCatalogThrottle(AnonRateThrottle):
+    rate = "60/min"
+
+
+class UserCatalogThrottle(UserRateThrottle):
+    rate = "240/min"
+
+
 class CategoryListView(generics.ListAPIView):
     """
-    Возвращает список активных категорий.
-    Фильтры:
-    - is_active=true (по умолчанию)
-    - search по name (подстрока, регистр нечувствителен)
-    Сортировка:
-    - name ASC (по возрастанию)
-    Пагинация:
-    - отключена по умолчанию
-    - если количество категорий > 200 — можно включить page/size
-    Кэширование:
-    - ключ: categories:list
-    - TTL: 5 минут (+/- 10% джиттер)
-    Заголовки:
-    - ETag / Last-Modified (опционально)
-    - X-Cache: HIT | MISS
-    Ответ:
-    - 200 OK: массив объектов [{id, name, slug}, ...]
+    - Только активные категории.
+    - Поиск по name (?search=...).
+    - Ручной кэш: ключ учитывает параметры поиска.
+    - Заголовок X-Cache: HIT|MISS.
     """
-    queryset = Category.objects.filter(is_active=True).order_by(Lower('name'))
     serializer_class = CategoryListSerializer
+    throttle_classes = [AnonCatalogThrottle, UserCatalogThrottle]
     filter_backends = [filters.SearchFilter]
     search_fields = ['name']
     pagination_class = None
 
+    def get_queryset(self):
+        return Category.objects.filter(is_active=True).order_by(Lower('name'))
 
-@method_decorator(cache_page(60 * 5, key_prefix="category"), name='dispatch')
+    def list(self, request, *args, **kwargs):
+        """нормализуем параметры для ключа кэша"""
+        params = {
+            "search": (request.query_params.get("search") or "").strip().lower(),
+        }
+        cache_key = f"categories:list:{_hash_params(params)}"
+
+        cached = cache.get(cache_key)
+        if cached is not None:
+            resp = Response(cached)
+            resp["X-Cache"] = "HIT"
+            return resp
+
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        data = serializer.data
+
+        cache.set(cache_key, data, timeout=_ttl_with_jitter(300, 0.10))
+        resp = Response(data)
+        resp["X-Cache"] = "MISS"
+        return resp
+
+
 class CategoryDetailView(generics.RetrieveAPIView):
     """
-    Возвращает детали категории:
-    - id, name, slug, is_active, created_at, updated_at
-    Кэш:
-    - ключ: category:{id}, TTL 5 минут
+    GET /api/v1/categories/{id}/
+    - Публичный детальник: 404 для неактивных категорий.
+    - Ручной кэш по ключу category:{id}.
+    - Заголовок X-Cache: HIT|MISS.
     """
-    queryset = Category.objects.all()
     serializer_class = CategoryListSerializer
+    throttle_classes = [AnonCatalogThrottle, UserCatalogThrottle]
+    lookup_field = 'pk'
+
+    def retrieve(self, request, *args, **kwargs):
+        pk = kwargs.get("pk")
+        cache_key = f"category:{pk}"
+
+        cached = cache.get(cache_key)
+        if cached is not None:
+            resp = Response(cached)
+            resp["X-Cache"] = "HIT"
+            return resp
+
+        # Публичный контракт: неактивные категории не выдаём
+        instance = get_object_or_404(Category, pk=pk, is_active=True)
+
+        serializer = self.get_serializer(instance)
+        data = serializer.data
+        cache.set(cache_key, data, timeout=_ttl_with_jitter(300, 0.10))
+
+        resp = Response(data)
+        resp["X-Cache"] = "MISS"
+        return resp
 
 
 class CategoryDeleteView(APIView):
