@@ -108,61 +108,46 @@ class CategoryListView(generics.ListAPIView):
         return resp
 
 
-class CategoryDetailView(generics.RetrieveAPIView):
+class CategoryView(generics.RetrieveAPIView):
     """
     GET /api/v1/categories/{id}/
+    DELETE /api/v1/categories/{id}/
     Назначение:
-      - вернуть детальную информацию по категории (публичный контракт).
+      - GET: вернуть детальную информацию по категории (public).
+      - DELETE: удалить категорию (по умолчанию мягко) — только админ.
     Правила:
-      - неактивные категории (is_active=False) в публичном API не выдаём → 404.
+      - GET: неактивные (is_active=False) не выдаём → 404.
+      - DELETE: по умолчанию soft (is_active=False); hard — только с ?hard=true и если нет связанных продуктов.
     Кэш:
-      - ключ: category:{id}, TTL 5 минут ±10%, заголовок X-Cache: HIT|MISS.
+      - GET: ключ category:{id}, TTL 5 минут ±10%, X-Cache: HIT|MISS.
     """
     serializer_class = CategoryDetailSerializer
     throttle_classes = [AnonCatalogThrottle, UserCatalogThrottle]
-    lookup_field = 'pk'
+    lookup_field = "pk"
 
-    def retrieve(self, request, *args, **kwargs):
+    def get_permissions(self):
+        if self.request.method == "DELETE":
+            return [permissions.IsAdminUser()]
+        return super().get_permissions()
+
+    def get(self, request, *args, **kwargs):
         pk = kwargs.get("pk")
         cache_key = f"category:{pk}"
-
         cached = cache.get(cache_key)
         if cached is not None:
             resp = Response(cached)
             resp["X-Cache"] = "HIT"
             return resp
-
-        # Публичный контракт: неактивные категории не выдаём
         instance = get_object_or_404(Category, pk=pk, is_active=True)
-
-        serializer = self.get_serializer(instance)
-        data = serializer.data
+        data = self.get_serializer(instance).data
         cache.set(cache_key, data, timeout=_ttl_with_jitter(300, 0.10))
-
         resp = Response(data)
         resp["X-Cache"] = "MISS"
         return resp
 
-
-class CategoryDeleteView(APIView):
-    """
-    DELETE /api/v1/categories/{id}/
-    Политика:
-      - по умолчанию мягкое удаление (is_active=False);
-      - жёсткое удаление: только для админа и только с флагом ?hard=true,
-        если у категории нет связанных продуктов.
-    Ответы:
-      - 204 No Content — успешное soft/hard удаление.
-      - 400 Bad Request — есть связанные продукты (code=category_in_use).
-      - 403 Forbidden — нет прав (обеспечивает IsAdminUser).
-      - 404 Not Found — категория не найдена.
-    """
-    permission_classes = [permissions.IsAdminUser]
-
     def delete(self, request, pk, *args, **kwargs):
         category = get_object_or_404(Category, pk=pk)
         hard = str(request.query_params.get("hard", "false")).lower() in ("1", "true", "yes")
-
         if hard:
             if category.products.exists():
                 return Response(
@@ -171,7 +156,6 @@ class CategoryDeleteView(APIView):
                 )
             category.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
-
         category.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

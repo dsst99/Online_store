@@ -1,16 +1,14 @@
 from django.urls import path
 from .views import (
     CategoryListView,
-    CategoryDeleteView,
-    CategoryDetailView,
+    CategoryView,
     ProductListView, ProductDetailView,
 )
 
 urlpatterns = [
     # Категории
     path('categories/', CategoryListView.as_view(), name="category_list"),
-    path('categories/<int:pk>/', CategoryDetailView.as_view(), name="category_detail"),
-    path('categories/<int:pk>/delete/', CategoryDeleteView.as_view(), name="category_delete"),
+    path('categories/<int:pk>/', CategoryView.as_view(), name="category_detail"),
 
     # Продукты
     path('products/', ProductListView.as_view(), name="product_list"),
