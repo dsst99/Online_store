@@ -9,7 +9,6 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status, generics, permissions, filters
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
-from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 
 from apps.catalog.models import Category, Product
@@ -45,7 +44,7 @@ def _products_list_version() -> int:
     return v if isinstance(v, int) and v > 0 else 1
 
 
-def _category_list_version() -> int:
+def _categories_list_version() -> int:
     key = "categories:list:version"
     v = cache.get(key)
     return v if isinstance(v, int) and v > 0 else 1
@@ -89,7 +88,7 @@ class CategoryListView(generics.ListAPIView):
         params = {
             "search": (request.query_params.get("search") or "").strip().lower(),
         }
-        version = _category_list_version()
+        version = _categories_list_version()
         cache_key = f"categories:list:v{version}:{_hash_params(params)}"
 
         cached = cache.get(cache_key)
