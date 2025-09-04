@@ -1,59 +1,85 @@
 import hashlib
-from random import random
+import random
 from urllib.parse import urlencode
-from django.core.cache import cache
 
+from django.core.cache import cache
 from django.db.models.functions import Lower
 from django.shortcuts import get_object_or_404
-from rest_framework import status, generics, permissions
+
+from rest_framework import status, generics, permissions, filters
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
-from rest_framework import filters
-from apps.catalog.models import Category, Product
-from apps.catalog.serializers import CategoryListSerializer, ProductListSerializer
-from django.utils.decorators import method_decorator
-from django.views.decorators.cache import cache_page
+from django_filters.rest_framework import DjangoFilterBackend
 
+from apps.catalog.models import Category, Product
+from apps.catalog.serializers import (
+    CategoryListSerializer,
+    CategoryDetailSerializer,
+    ProductListSerializer,
+)
+
+
+# ---------- cache utils ----------
 
 def _ttl_with_jitter(base: int = 300, jitter: float = 0.10) -> int:
-    """TTL c анти-догпайлом: +-10% по умолчанию."""
+    """TTL с анти-догпайлом: ±jitter от базового значения (по умолчанию ±10%)."""
     delta = int(base * jitter)
     return base + random.randint(-delta, delta)
 
 
 def _hash_params(params: dict) -> str:
-    """Стабильный хэш нормализованных параметров запроса."""
+    """Стабильный sha256-хэш нормализованных параметров запроса (для ключей кэша)."""
     encoded = urlencode(sorted(params.items()), doseq=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _products_list_version() -> int:
+    """
+    Версия списков продуктов для кэша.
+    Инкрементируется сигналами при create/update/delete/soft_delete Product.
+    Если версии нет — инициализируем 1 (см. сигнал).
+    """
+    key = "products:list:version"
+    v = cache.get(key)
+    return v if isinstance(v, int) and v > 0 else 1
+
+
+# ---------- throttling ----------
+
 class AnonCatalogThrottle(AnonRateThrottle):
+    """Троттлинг для анонимных пользователей каталога."""
     rate = "60/min"
 
 
 class UserCatalogThrottle(UserRateThrottle):
+    """Троттлинг для аутентифицированных пользователей каталога."""
     rate = "240/min"
 
 
+# ---------- categories ----------
+
 class CategoryListView(generics.ListAPIView):
     """
-    - Только активные категории.
-    - Поиск по name (?search=...).
-    - Ручной кэш: ключ учитывает параметры поиска.
-    - Заголовок X-Cache: HIT|MISS.
+    GET /api/v1/categories/
+    Назначение:
+      - вернуть список активных категорий.
+    Функционал:
+      - поиск по name (?search=..., регистр не важен);
+      - ручной кэш Memcached с ключом, учитывающим параметры;
+      - заголовок X-Cache: HIT|MISS.
     """
     serializer_class = CategoryListSerializer
     throttle_classes = [AnonCatalogThrottle, UserCatalogThrottle]
     filter_backends = [filters.SearchFilter]
     search_fields = ['name']
-    pagination_class = None
+    pagination_class = None  # по ТЗ: без пагинации
 
     def get_queryset(self):
         return Category.objects.filter(is_active=True).order_by(Lower('name'))
 
     def list(self, request, *args, **kwargs):
-        """нормализуем параметры для ключа кэша"""
+        # нормализуем параметры для ключа кэша
         params = {
             "search": (request.query_params.get("search") or "").strip().lower(),
         }
@@ -78,11 +104,14 @@ class CategoryListView(generics.ListAPIView):
 class CategoryDetailView(generics.RetrieveAPIView):
     """
     GET /api/v1/categories/{id}/
-    - Публичный детальник: 404 для неактивных категорий.
-    - Ручной кэш по ключу category:{id}.
-    - Заголовок X-Cache: HIT|MISS.
+    Назначение:
+      - вернуть детальную информацию по категории (публичный контракт).
+    Правила:
+      - неактивные категории (is_active=False) в публичном API не выдаём → 404.
+    Кэш:
+      - ключ: category:{id}, TTL 5 минут ±10%, заголовок X-Cache: HIT|MISS.
     """
-    serializer_class = CategoryListSerializer
+    serializer_class = CategoryDetailSerializer
     throttle_classes = [AnonCatalogThrottle, UserCatalogThrottle]
     lookup_field = 'pk'
 
@@ -110,13 +139,16 @@ class CategoryDetailView(generics.RetrieveAPIView):
 
 class CategoryDeleteView(APIView):
     """
-    - По умолчанию: мягкое удаление (is_active=False).
-    - Жёсткое удаление: только админ и только с флагом ?hard=true, если нет связанных продуктов.
+    DELETE /api/v1/categories/{id}/
+    Политика:
+      - по умолчанию мягкое удаление (is_active=False);
+      - жёсткое удаление: только для админа и только с флагом ?hard=true,
+        если у категории нет связанных продуктов.
     Ответы:
-    - 204 No Content — успешное soft/hard удаление.
-    - 400 Bad Request — есть связанные продукты (code=category_in_use).
-    - 403 Forbidden — нет прав (обеспечивает IsAdminUser).
-    - 404 Not Found — категория не найдена.
+      - 204 No Content — успешное soft/hard удаление.
+      - 400 Bad Request — есть связанные продукты (code=category_in_use).
+      - 403 Forbidden — нет прав (обеспечивает IsAdminUser).
+      - 404 Not Found — категория не найдена.
     """
     permission_classes = [permissions.IsAdminUser]
 
@@ -137,26 +169,93 @@ class CategoryDeleteView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+# ---------- products ----------
+
 class ProductListView(generics.ListAPIView):
     """
-    Возвращает список активных продуктов.
-    Фильтры:
-    - is_active=true (по умолчанию)
-    - search по name (подстрока, регистр нечувствителен)
-    - фильтр по category_id
-    Сортировка:
-    - name ASC (по возрастанию)
-    Пагинация:
-    - отключена по умолчанию
-    - если количество продуктов > 200 — включить page/size
-    Кэширование:
-    - TTL 5 минут
-    Ответ:
-    - 200 OK: массив объектов [{id, name, price, category_id}, ...]
+    GET /api/v1/products/
+    Назначение:
+      - вернуть список активных продуктов.
+    Функционал:
+      - поиск по name (?search=..., регистр не важен);
+      - фильтры:
+          * ?category=<id>  ИЛИ  ?category_slug=<slug>
+          * ?price_min=<num> (price__gte)
+          * ?price_max=<num> (price__lte)
+      - сортировка по name (ASC);
+      - без пагинации (по ТЗ); если включишь — добавь page/size в ключ кэша;
+      - ручной кэш Memcached: ключ = products:list:v{N}:{hash(filters)}, TTL 5 минут ±10%;
+      - заголовок X-Cache: HIT|MISS.
+    Ответ (по текущему сериализатору):
+      - [{id, name, price, category}] — category = имя категории.
     """
-    queryset = Product.objects.filter(is_active=True).order_by(Lower('name'))
+    throttle_classes = [AnonCatalogThrottle, UserCatalogThrottle]
     serializer_class = ProductListSerializer
-    filter_backends = [filters.SearchFilter]
+    filter_backends = [filters.SearchFilter, DjangoFilterBackend]
     search_fields = ['name']
-    filterset_fields = ['category', 'price']
-    pagination_class = None
+    pagination_class = None  # без пагинации
+
+    def get_queryset(self):
+        """
+        Базовый queryset:
+          - только активные товары,
+          - подгружаем категорию (select_related) чтобы не было N+1,
+          - сортируем по name.
+        """
+        return (
+            Product.objects.filter(is_active=True)
+            .select_related('category')
+            .order_by(Lower('name'))
+        )
+
+    def list(self, request, *args, **kwargs):
+        # Собираем и нормализуем параметры фильтрации/поиска для ключа кэша
+        search = (request.query_params.get("search") or "").strip().lower()
+        category_id = (request.query_params.get("category") or "").strip()
+        category_slug = (request.query_params.get("category_slug") or "").strip().lower()
+        price_min = (request.query_params.get("price_min") or "").strip()
+        price_max = (request.query_params.get("price_max") or "").strip()
+
+        version = _products_list_version()
+        params = {
+            "search": search,
+            "category": category_id,
+            "category_slug": category_slug,
+            "price_min": price_min,
+            "price_max": price_max,
+        }
+        cache_key = f"products:list:v{version}:{_hash_params(params)}"
+
+        cached = cache.get(cache_key)
+        if cached is not None:
+            resp = Response(cached)
+            resp["X-Cache"] = "HIT"
+            return resp
+
+        # Применяем фильтры к queryset
+        qs = self.get_queryset()
+        if category_id:
+            qs = qs.filter(category_id=category_id)
+        if category_slug:
+            qs = qs.filter(category__slug=category_slug)
+        if price_min:
+            try:
+                qs = qs.filter(price__gte=price_min)
+            except Exception:
+                pass  # игнорируем некорректный параметр, не падаем
+        if price_max:
+            try:
+                qs = qs.filter(price__lte=price_max)
+            except Exception:
+                pass
+
+        # Поиск по имени через SearchFilter
+        qs = self.filter_queryset(qs)
+
+        serializer = self.get_serializer(qs, many=True)
+        data = serializer.data
+        cache.set(cache_key, data, timeout=_ttl_with_jitter(300, 0.10))
+
+        resp = Response(data)
+        resp["X-Cache"] = "MISS"
+        return resp
