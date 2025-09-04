@@ -15,8 +15,6 @@ class CategoryListSerializer(serializers.ModelSerializer):
 
 class CategoryDetailSerializer(serializers.ModelSerializer):
     """Сериализатор деталей категории для публичного API (id, name, slug, created_at, updated_at)."""
-    created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S")
-    updated_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S")
 
     class Meta:
         model = Category
@@ -75,8 +73,6 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     Публичный контракт: без is_active (неактивные продукты не выдаём, см. вью).
     """
     category = CategoryInlineSerializer(read_only=True)
-    created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S")
-    updated_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S")
 
     class Meta:
         model = Product

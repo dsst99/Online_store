@@ -99,12 +99,23 @@ CACHES = {
     'default': {
         "BACKEND": "django.core.cache.backends.memcached.PyMemcacheCache",
         #
-        "LOCATION": "127.0.0.1:11211"
+        "LOCATION": "127.0.0.1:11211",
+        "TIMEOUT": 300,
     }
 }
 
 REST_FRAMEWORK = {
-    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.SearchFilter",
+        "rest_framework.filters.OrderingFilter",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "60/min",  # для анонимов (AnonCatalogThrottle)
+        "user": "240/min",  # для аутентифицированных (UserCatalogThrottle)
+    },
+    "DATETIME_FORMAT": "%Y-%m-%d %H:%M:%S",
 }
 
 SPECTACULAR_SETTINGS = {
