@@ -3,7 +3,7 @@ from .views import (
     CategoryListView,
     CategoryDeleteView,
     CategoryDetailView,
-    ProductListView,
+    ProductListView, ProductDetailView,
 )
 
 urlpatterns = [
@@ -14,4 +14,5 @@ urlpatterns = [
 
     # Продукты
     path('api/v1/products/', ProductListView.as_view(), name="product_list"),
+    path('api/v1/products/<int:pk>/', ProductDetailView.as_view(), name="product_detail"),
 ]
