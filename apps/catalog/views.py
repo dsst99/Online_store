@@ -1,5 +1,6 @@
 from django.db.models.functions import Lower
-from rest_framework import status, generics
+from django.shortcuts import get_object_or_404
+from rest_framework import status, generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import filters
@@ -9,39 +10,9 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
 
 
-class CategoryDeleteView(APIView):
-    """
-    DELETE /api/categories/{id}/
-    Политика удаления категорий:
-    - По умолчанию категории "удаляются" мягко (через `is_active=False`).
-    - Физическое удаление доступно только админам.
-    - Если у категории есть связанные продукты — удаление запрещено.
-    Возвращает:
-    - 204 No Content — если категория успешно удалена.
-    - 400 Bad Request — если у категории есть связанные продукты.
-    - 403 Forbidden — если пользователь не админ.
-    - 404 Not Found — если категория не найдена.
-    """
-
-    def delete(self, request, pk):
-        category = Category.objects.get(pk=pk)
-
-        if not request.user.is_staff:
-            return Response({'detail': 'Нет прав на удаление!'},
-                            status=status.HTTP_403_FORBIDDEN)
-
-        if category.products.exists():
-            return Response({'detail': 'Категория содержит продукты, удаление невозможно!'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        category.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
 @method_decorator(cache_page(60 * 5), name='dispatch')
 class CategoryListView(generics.ListAPIView):
     """
-    GET /api/v1/categories/
     Возвращает список активных категорий.
     Фильтры:
     - is_active=true (по умолчанию)
@@ -70,7 +41,6 @@ class CategoryListView(generics.ListAPIView):
 @method_decorator(cache_page(60 * 5, key_prefix="category"), name='dispatch')
 class CategoryDetailView(generics.RetrieveAPIView):
     """
-    GET /api/v1/categories/{id}/
     Возвращает детали категории:
     - id, name, slug, is_active, created_at, updated_at
     Кэш:
@@ -80,9 +50,37 @@ class CategoryDetailView(generics.RetrieveAPIView):
     serializer_class = CategoryListSerializer
 
 
+class CategoryDeleteView(APIView):
+    """
+    - По умолчанию: мягкое удаление (is_active=False).
+    - Жёсткое удаление: только админ и только с флагом ?hard=true, если нет связанных продуктов.
+    Ответы:
+    - 204 No Content — успешное soft/hard удаление.
+    - 400 Bad Request — есть связанные продукты (code=category_in_use).
+    - 403 Forbidden — нет прав (обеспечивает IsAdminUser).
+    - 404 Not Found — категория не найдена.
+    """
+    permission_classes = [permissions.IsAdminUser]
+
+    def delete(self, request, pk, *args, **kwargs):
+        category = get_object_or_404(Category, pk=pk)
+        hard = str(request.query_params.get("hard", "false")).lower() in ("1", "true", "yes")
+
+        if hard:
+            if category.products.exists():
+                return Response(
+                    {"detail": "Категория содержит продукты, удаление невозможно", "code": "category_in_use"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            category.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        category.soft_delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class ProductListView(generics.ListAPIView):
     """
-    GET /api/v1/products/
     Возвращает список активных продуктов.
     Фильтры:
     - is_active=true (по умолчанию)
