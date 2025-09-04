@@ -48,6 +48,15 @@ class CategoryDetailSerializer(serializers.ModelSerializer):
         return new_slug
 
 
+class CategoryInlineSerializer(serializers.ModelSerializer):
+    """Короткое представление категории внутри продукта (public)."""
+
+    class Meta:
+        model = Category
+        fields = ['id', 'name', 'slug']
+        read_only_fields = ['id', 'name', 'slug']
+
+
 class ProductListSerializer(serializers.ModelSerializer):
     """Сериализатор списка продуктов для публичного API (id, name, price, имя категории)."""
     category = serializers.CharField(source='category.name', read_only=True)
@@ -56,3 +65,27 @@ class ProductListSerializer(serializers.ModelSerializer):
         model = Product
         fields = ['id', 'name', 'price', 'category']
         read_only_fields = ['id']
+
+
+class ProductDetailSerializer(serializers.ModelSerializer):
+    """
+    Детали продукта для публичного API.
+    Публичный контракт: без is_active (неактивные продукты не выдаём, см. вью).
+    """
+    category = CategoryInlineSerializer(read_only=True)
+    created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S")
+    updated_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S")
+
+    class Meta:
+        model = Product
+        fields = [
+            'id',
+            'name',
+            'description',
+            'price',
+            'stock',
+            'category',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
