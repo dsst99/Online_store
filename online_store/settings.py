@@ -30,7 +30,6 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'django_extensions',
     'apps.users',
-    'apps.catalog',
     'apps.catalog.apps.CatalogConfig',
     'apps.orders',
     'apps.payments',
