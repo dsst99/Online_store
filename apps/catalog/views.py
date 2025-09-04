@@ -16,7 +16,7 @@ from apps.catalog.models import Category, Product
 from apps.catalog.serializers import (
     CategoryListSerializer,
     CategoryDetailSerializer,
-    ProductListSerializer,
+    ProductListSerializer, ProductDetailSerializer,
 )
 
 
@@ -278,7 +278,7 @@ class ProductDetailView(generics.RetrieveAPIView):
     Кэш:
       - ключ: product:{id}, TTL 5 минут ±10%, заголовок X-Cache: HIT|MISS.
     """
-    serializer_class = ProductListSerializer
+    serializer_class = ProductDetailSerializer
     throttle_classes = [AnonCatalogThrottle, UserCatalogThrottle]
     lookup_field = "pk"
 
