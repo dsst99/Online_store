@@ -45,6 +45,12 @@ def _products_list_version() -> int:
     return v if isinstance(v, int) and v > 0 else 1
 
 
+def _category_list_version() -> int:
+    key = "categories:list:version"
+    v = cache.get(key)
+    return v if isinstance(v, int) and v > 0 else 1
+
+
 # ---------- throttling ----------
 
 class AnonCatalogThrottle(AnonRateThrottle):
@@ -83,7 +89,8 @@ class CategoryListView(generics.ListAPIView):
         params = {
             "search": (request.query_params.get("search") or "").strip().lower(),
         }
-        cache_key = f"categories:list:{_hash_params(params)}"
+        version = _category_list_version()
+        cache_key = f"categories:list:v{version}:{_hash_params(params)}"
 
         cached = cache.get(cache_key)
         if cached is not None:
@@ -253,6 +260,42 @@ class ProductListView(generics.ListAPIView):
         qs = self.filter_queryset(qs)
 
         serializer = self.get_serializer(qs, many=True)
+        data = serializer.data
+        cache.set(cache_key, data, timeout=_ttl_with_jitter(300, 0.10))
+
+        resp = Response(data)
+        resp["X-Cache"] = "MISS"
+        return resp
+
+
+class ProductDetailView(generics.RetrieveAPIView):
+    """
+    GET /api/v1/products/{id}/
+    Назначение:
+      - вернуть детальную информацию по продукту.
+    Правила:
+      - неактивные продукты (is_active=False) в публичном API не выдаём → 404.
+    Кэш:
+      - ключ: product:{id}, TTL 5 минут ±10%, заголовок X-Cache: HIT|MISS.
+    """
+    serializer_class = ProductListSerializer
+    throttle_classes = [AnonCatalogThrottle, UserCatalogThrottle]
+    lookup_field = "pk"
+
+    def retrieve(self, request, *args, **kwargs):
+        pk = kwargs.get("pk")
+        cache_key = f"product:{pk}"
+
+        cached = cache.get(cache_key)
+        if cached is not None:
+            resp = Response(cached)
+            resp["X-Cache"] = "HIT"
+            return resp
+
+        # Публичный контракт: неактивные продукты в публичном API не выдаём
+        instance = get_object_or_404(Product.objects.select_related("category"), pk=pk, is_active=True)
+
+        serializer = self.get_serializer(instance)
         data = serializer.data
         cache.set(cache_key, data, timeout=_ttl_with_jitter(300, 0.10))
 
