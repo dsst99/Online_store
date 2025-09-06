@@ -1,7 +1,9 @@
+from decimal import Decimal
+
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db.models import F, Sum
+from django.db.models import F, Sum, DecimalField, Value
 from django.db.models.functions import Coalesce
 
 from apps.catalog.models import Product  # важно: используем каталог
@@ -58,7 +60,13 @@ class Order(models.Model):
     def recalc_total(self, save: bool = True):
         """Пересчёт total_price: Σ(quantity * price_at_purchase)."""
         agg = self.items.aggregate(
-            s=Coalesce(Sum(F('quantity') * F('price_at_purchase')), 0)
+            s=Coalesce(
+                Sum(
+                    F('quantity') * F('price_at_purchase'),
+                    output_field=DecimalField(max_digits=10, decimal_places=2),
+                ),
+                Value(Decimal('0.00'), output_field=DecimalField(max_digits=10, decimal_places=2)),
+            )
         )
         self.total_price = agg['s']
         if save:
