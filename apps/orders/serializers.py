@@ -1,4 +1,3 @@
-# apps/orders/serializers.py
 from collections import defaultdict
 
 from django.db import transaction
