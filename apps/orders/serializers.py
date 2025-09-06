@@ -6,6 +6,7 @@ from rest_framework import serializers
 
 from apps.catalog.models import Product
 from apps.orders.models import Order, OrderItem
+from apps.orders.tasks import order_created_generate_pdf_and_email, order_shipped_notify_external
 
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ----------
@@ -142,6 +143,7 @@ class OrderStatusPatchSerializer(serializers.ModelSerializer):
     Обновление статуса (PATCH).
     Переходы валидируются на уровне модели (clean()).
     """
+
     class Meta:
         model = Order
         fields = ("status",)
@@ -152,4 +154,6 @@ class OrderStatusPatchSerializer(serializers.ModelSerializer):
         instance.status = new_status
         instance.full_clean()  # дергает Order.clean() с валидацией перехода
         instance.save(update_fields=["status", "updated_at"])
+        if instance.status == Order.STATUS_SHIPPED:
+            order_shipped_notify_external.delay(instance.id)
         return instance
