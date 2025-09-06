@@ -31,7 +31,7 @@ INSTALLED_APPS = [
     'django_extensions',
     'apps.users',
     'apps.catalog.apps.CatalogConfig',
-    'apps.orders',
+    'apps.orders.apps.OrdersConfig',
     'apps.payments',
     'apps.common',
     'apps.docs',
