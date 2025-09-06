@@ -173,7 +173,6 @@ class ProductListView(generics.ListAPIView):
           * ?price_min=<num> (price__gte)
           * ?price_max=<num> (price__lte)
       - сортировка по name (ASC);
-      - без пагинации (по ТЗ); если включишь — добавь page/size в ключ кэша;
       - ручной кэш Memcached: ключ = products:list:v{N}:{hash(filters)}, TTL 5 минут ±10%;
       - заголовок X-Cache: HIT|MISS.
     Ответ (по текущему сериализатору):
