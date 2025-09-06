@@ -15,4 +15,5 @@ urlpatterns = [
 
     # бизнес-эндпоинты
     path('api/v1/', include('apps.catalog.urls')),
+    path('api/v1/', include('apps.orders.urls')),
 ]
