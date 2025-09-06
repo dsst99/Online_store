@@ -13,6 +13,7 @@ from apps.orders.serializers import (
     OrderListSerializer,
     OrderDetailSerializer,
     OrderStatusPatchSerializer,
+    PlainBadRequest
 )
 
 
@@ -98,7 +99,10 @@ class OrderListCreateView(generics.GenericAPIView):
     def post(self, request, *args, **kwargs):
         ser = OrderCreateSerializer(data=request.data, context={"request": request})
         ser.is_valid(raise_exception=True)
-        order = ser.save()
+        try:
+            order = ser.save()
+        except PlainBadRequest as e:
+            return Response(e.payload, status=status.HTTP_400_BAD_REQUEST)
         # деталь в ответе
         data = OrderDetailSerializer(order).data
         # инвалидация списка пользователя (версия поднимет сигнал — см. orders/signals.py)
