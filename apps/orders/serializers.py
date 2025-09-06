@@ -83,7 +83,7 @@ class OrderCreateSerializer(serializers.Serializer):
                 requested = it["quantity"]
                 if prod.stock < requested:
                     errors.append(
-                        {"product_id": prod.id, "available": prod.stock, "requested": requested}
+                        {"product_id": int(prod.pk), "available": int(prod.stock), "requested": int(requested)}
                     )
             if errors:
                 raise serializers.ValidationError(
