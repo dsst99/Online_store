@@ -5,6 +5,7 @@ from drf_spectacular.views import (SpectacularAPIView,
                                    SpectacularRedocView)
 
 urlpatterns = [
+    path('admin/', admin.site.urls),
     # схема OpenAPI
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     # документация Swagger UI

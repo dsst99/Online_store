@@ -94,8 +94,8 @@ class Product(models.Model):
             models.Index(Lower('name'), name='product_name_lower_idx'),
         ]
         constraints = [
-            models.CheckConstraint(check=models.Q(price__gte=0), name='price_gte_0'),
-            models.CheckConstraint(check=models.Q(stock__gte=0), name='stock_gte_0'),
+            models.CheckConstraint(condition=models.Q(price__gte=0), name="price_gte_0"),
+            models.CheckConstraint(condition=models.Q(stock__gte=0), name="stock_gte_0"),
         ]
         ordering = ['name']
         verbose_name = "Продукт"
