@@ -2,11 +2,12 @@ from collections import defaultdict
 
 from django.db import transaction
 from django.db.models import F
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from apps.catalog.models import Product
 from apps.orders.models import Order, OrderItem
-from apps.orders.tasks import order_created_generate_pdf_and_email, order_shipped_notify_external
+from apps.orders import tasks
 
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ----------
@@ -17,8 +18,14 @@ class OrderItemInputSerializer(serializers.Serializer):
     quantity = serializers.IntegerField(min_value=1)
 
     def validate(self, attrs):
-        # базовая нормализация
-        return attrs
+        return attrs  # базовая нормализация
+
+
+class PlainBadRequest(Exception):
+    """Исключение с готовым JSON-пейлоудом, который вернём из вью как есть."""
+
+    def __init__(self, payload: dict):
+        self.payload = payload
 
 
 class OrderItemReadSerializer(serializers.ModelSerializer):
@@ -40,19 +47,17 @@ class OrderCreateSerializer(serializers.Serializer):
       - агрегирует дубликаты product_id
       - в транзакции: select_for_update по продуктам, проверка stock, списание, создание Order + OrderItem[]
       - пересчитывает total_price через order.recalc_total()
+      - триггерит Celery-задачу генерации PDF и "отправки" email
     """
     items = OrderItemInputSerializer(many=True)
 
     def validate_items(self, items):
         if not items:
             raise serializers.ValidationError("Список позиций пуст.")
-        # агрегируем количество по одному продукту
         aggregated = defaultdict(int)
         for it in items:
             aggregated[it["product_id"]] += it["quantity"]
-        # превращаем обратно в нормализованный список
-        normalized = [{"product_id": pid, "quantity": qty} for pid, qty in aggregated.items()]
-        return normalized
+        return [{"product_id": pid, "quantity": qty} for pid, qty in aggregated.items()]
 
     def create(self, validated_data):
         user = self.context["request"].user
@@ -61,20 +66,20 @@ class OrderCreateSerializer(serializers.Serializer):
         product_ids = [i["product_id"] for i in items]
 
         with transaction.atomic():
-            # блокируем продукты для исключения гонок
+            # блокируем продукты для исключения гонок (уникальные id)
             products_qs = (
                 Product.objects
                 .select_for_update()
-                .filter(pk__in=product_ids, is_active=True)
+                .filter(pk__in=set(product_ids), is_active=True)
             )
             products_by_id = {p.id: p for p in products_qs}
 
             # проверяем, что все продукты существуют и активны
-            missing = set(product_ids) - set(products_by_id.keys())
+            missing = sorted(set(int(pid) for pid in product_ids) - set(products_by_id.keys()))
             if missing:
-                raise serializers.ValidationError(
-                    {"items": [f"Продукт(ы) не найдены или неактивны: {sorted(missing)}"]}
-                )
+                raise PlainBadRequest({
+                    "items": [f"Продукт(ы) не найдены или неактивны: {sorted(missing)}"]
+                })
 
             # проверка stock
             errors = []
@@ -86,9 +91,10 @@ class OrderCreateSerializer(serializers.Serializer):
                         {"product_id": int(prod.pk), "available": int(prod.stock), "requested": int(requested)}
                     )
             if errors:
-                raise serializers.ValidationError(
-                    {"stock": "Недостаточно товара на складе", "details": errors}
-                )
+                raise PlainBadRequest({
+                    "stock": "Недостаточно товара на складе",
+                    "details": errors,
+                })
 
             # создаём заказ
             order = Order.objects.create(user=user, status=Order.STATUS_PENDING)
@@ -99,9 +105,8 @@ class OrderCreateSerializer(serializers.Serializer):
                 prod = products_by_id[it["product_id"]]
                 qty = it["quantity"]
 
-                # списание
                 Product.objects.filter(pk=prod.pk).update(stock=F("stock") - qty)
-                prod.stock -= qty  # локально тоже уменьшим, чтобы price_at_purchase брался с актуального объекта
+                prod.stock -= qty  # локально тоже уменьшим
 
                 order_items.append(
                     OrderItem(order=order, product=prod, quantity=qty, price_at_purchase=prod.price)
@@ -111,6 +116,8 @@ class OrderCreateSerializer(serializers.Serializer):
             # пересчёт total
             order.recalc_total(save=True)
 
+        # Celery: PDF + имитация email
+        tasks.order_created_generate_pdf_and_email.delay(order.id)
         return order
 
 
@@ -149,11 +156,14 @@ class OrderStatusPatchSerializer(serializers.ModelSerializer):
         fields = ("status",)
 
     def update(self, instance: Order, validated_data):
-        new_status = validated_data["status"]
-        # применяем и валидируем
-        instance.status = new_status
-        instance.full_clean()  # дергает Order.clean() с валидацией перехода
+        instance.status = validated_data["status"]
+        try:
+            instance.full_clean()  # дергает Order.clean() с валидацией перехода
+        except DjangoValidationError as e:
+            # конвертируем в DRF-валидатор → HTTP 400
+            raise serializers.ValidationError(e.message_dict or {"detail": e.messages})
+
         instance.save(update_fields=["status", "updated_at"])
         if instance.status == Order.STATUS_SHIPPED:
-            order_shipped_notify_external.delay(instance.id)
+            tasks.order_shipped_notify_external.delay(instance.id)
         return instance
